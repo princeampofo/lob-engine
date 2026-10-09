@@ -1,5 +1,7 @@
 # lob-engine
 
+[![CI](https://github.com/princeampofo/lob-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/princeampofo/lob-engine/actions/workflows/ci.yml)
+
 A C++20 limit order book with price-time matching, validated against Nasdaq order-level data
 (LOBSTER). It has two implementations behind one interface, a `std::map` reference book and
 a price ladder about 4x faster, plus an event-driven backtester and Python bindings with an
