@@ -51,6 +51,10 @@ public:
         std::erase_if(orders_, [&](const Order& o) { return o.side == side && o.price == price; });
     }
 
+    bool contains(OrderId id) const override {
+        return std::any_of(orders_.begin(), orders_.end(), [id](const Order& o) { return o.id == id; });
+    }
+
     std::optional<Price> best_bid() const override {
         Depth d = depth(1);
         if (d.bids.empty()) return std::nullopt;

@@ -22,6 +22,7 @@ public:
     bool reduce(OrderId id, Qty qty) override;
     void clear_level(Side side, Price price) override;
 
+    bool contains(OrderId id) const override { return orders_.contains(id); }
     std::optional<Price> best_bid() const override;
     std::optional<Price> best_ask() const override;
     Depth depth(std::size_t levels) const override;

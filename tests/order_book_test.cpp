@@ -130,7 +130,10 @@ TYPED_TEST(OrderBookTest, CancelFromMiddleOfQueue) {
 
 TYPED_TEST(OrderBookTest, FilledOrderIsGone) {
     this->limit(1, kSell, 100, 5);
+    EXPECT_TRUE(this->book.contains(1));
     this->limit(2, kBuy, 100, 5);
+    EXPECT_FALSE(this->book.contains(1));
+    EXPECT_FALSE(this->book.contains(2));
     EXPECT_FALSE(this->book.cancel(1));
     EXPECT_FALSE(this->book.reduce(1, 1));
     EXPECT_FALSE(this->book.cancel(2));  // fully filled on arrival, never rested

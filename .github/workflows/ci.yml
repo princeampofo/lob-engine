@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  cpp:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Release (GCC)
+            cxx: g++
+            cmake_args: -DCMAKE_BUILD_TYPE=Release
+          - name: ASan + UBSan (Clang)
+            cxx: clang++
+            cmake_args: -DCMAKE_BUILD_TYPE=Debug -DLOB_SANITIZE=ON -DLOB_BENCHMARKS=OFF
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_CXX_COMPILER=${{ matrix.cxx }} ${{ matrix.cmake_args }}
+      - name: Build
+        run: cmake --build build -j
+      - name: Test
+        # The LOBSTER sample days are not committed, so the full-day replay
+        # tests skip; the fixtures in tests/data still cover every data quirk.
+        run: |
+          ./build/lob_tests
+          ./build/lob_allocation_tests
+
+  python:
+    name: Python module
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: pip install .
+        run: pip install .
+      - name: Smoke test
+        run: |
+          python - <<'PY'
+          import lob
+          day = lob.Day("tests/data/WINDOW_message_2.csv", "tests/data/WINDOW_orderbook_2.csv")
+          result = day.replay(levels=2)  # a 2-level fixture
+          assert result["mismatches"] == 0 and result["revealed_levels"] == 2, result
+          book = lob.LadderBook()
+          book.add_limit(1, lob.Side.SELL, 100, 5)
+          assert book.add_limit(2, lob.Side.BUY, 101, 3) == [(2, 1, 100, 3)]
+          print("ok")
+          PY

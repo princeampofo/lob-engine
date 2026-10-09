@@ -10,17 +10,34 @@
 #include "lob/ladder_book.hpp"
 #include "lob/map_book.hpp"
 
+// Every plain, array and nothrow form is replaced, so whatever form allocates,
+// the matching delete frees memory from the same allocator (malloc).
 namespace {
 std::size_t g_allocations = 0;
+
+void* counted_malloc(std::size_t size) noexcept {
+    ++g_allocations;
+    return std::malloc(size == 0 ? 1 : size);
 }
+}  // namespace
 
 void* operator new(std::size_t size) {
-    ++g_allocations;
-    if (void* p = std::malloc(size == 0 ? 1 : size)) return p;
+    if (void* p = counted_malloc(size)) return p;
     throw std::bad_alloc();
 }
+void* operator new[](std::size_t size) {
+    if (void* p = counted_malloc(size)) return p;
+    throw std::bad_alloc();
+}
+void* operator new(std::size_t size, const std::nothrow_t&) noexcept { return counted_malloc(size); }
+void* operator new[](std::size_t size, const std::nothrow_t&) noexcept { return counted_malloc(size); }
+
 void operator delete(void* p) noexcept { std::free(p); }
+void operator delete[](void* p) noexcept { std::free(p); }
 void operator delete(void* p, std::size_t) noexcept { std::free(p); }
+void operator delete[](void* p, std::size_t) noexcept { std::free(p); }
+void operator delete(void* p, const std::nothrow_t&) noexcept { std::free(p); }
+void operator delete[](void* p, const std::nothrow_t&) noexcept { std::free(p); }
 
 namespace lob {
 namespace {

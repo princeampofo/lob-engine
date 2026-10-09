@@ -1,0 +1,24 @@
+[build-system]
+requires = ["scikit-build-core>=0.10", "pybind11>=2.13"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "lob-engine"
+version = "0.1.0"
+description = "Limit order book, LOBSTER replay and backtester with a C++20 core"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = ["numpy"]
+
+[project.optional-dependencies]
+notebook = ["pandas", "matplotlib", "jupyter"]
+
+[tool.scikit-build]
+wheel.packages = ["python/src/lob"]
+cmake.build-type = "Release"
+
+[tool.scikit-build.cmake.define]
+LOB_PYTHON = "ON"
+LOB_TESTS = "OFF"
+LOB_BENCHMARKS = "OFF"
+LOB_NATIVE = "OFF"   # keep the module portable

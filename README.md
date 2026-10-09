@@ -1,9 +1,12 @@
 # lob-engine
 
+[![CI](https://github.com/princeampofo/lob-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/princeampofo/lob-engine/actions/workflows/ci.yml)
+
 A C++20 limit order book with price-time matching, validated by replaying Nasdaq
 order-level data (LOBSTER). It has two implementations behind one interface, a
 `std::map` reference book and a price ladder about 4x faster, plus an event-driven
-backtester for an order-book-imbalance strategy.
+backtester for an order-book-imbalance strategy and Python bindings with an
+[analysis notebook](python/analysis.ipynb).
 
 ## Results
 
@@ -127,6 +130,26 @@ per timestamp after all its messages are applied, so it has no lookahead. Orders
 with arrival = send + latency and fill against the book at arrival, walking the visible
 levels. Many strategies run in one pass, so the 56-setting grid takes one replay per
 stock.
+
+## Python
+
+`pip install .` builds the C++ core into a `lob` module (pybind11 + scikit-build-core).
+Results come back as NumPy arrays:
+
+```python
+import lob
+day = lob.Day("data/AAPL_..._message_10.csv", "data/AAPL_..._orderbook_10.csv")
+day.replay()                                   # mismatch check, as lob_replay
+day.book_history(levels=10, step=1)            # replayed book: time, bid/ask price & size
+day.signal(levels=3)                           # imbalance and mid at every update
+day.backtest(0.5, holding_s=60, start_s=45_900, end_s=57_600)   # trades + summary
+day.backtest_grid([0.3, 0.5, 0.7], [1, 10, 60], end_s=45_900)    # many settings, one pass
+```
+
+[python/analysis.ipynb](python/analysis.ipynb) (`pip install ".[notebook]"`) plots the book
+over time, imbalance against future moves at several horizons, and where the strategy's
+P&L goes. It also shows that the signal fades beyond about 10 to 60 seconds, which is
+why long holds don't rescue it.
 
 ## Build and run
 

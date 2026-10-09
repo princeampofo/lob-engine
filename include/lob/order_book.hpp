@@ -39,6 +39,9 @@ public:
     // Removes every order resting at `price` on `side` (a mass cancel).
     virtual void clear_level(Side side, Price price) = 0;
 
+    // Whether an order with this id is resting in the book.
+    virtual bool contains(OrderId id) const = 0;
+
     virtual std::optional<Price> best_bid() const = 0;
     virtual std::optional<Price> best_ask() const = 0;
 
