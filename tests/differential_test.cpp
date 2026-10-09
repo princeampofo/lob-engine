@@ -57,7 +57,11 @@ TYPED_TEST(DifferentialTest, MatchesOracleOnRandomOperations) {
             const OrderId oldest = next_id > kCancelWindow ? next_id - kCancelWindow : 1;
             const OrderId id = static_cast<OrderId>(
                 uniform(static_cast<std::int64_t>(oldest), static_cast<std::int64_t>(next_id)));
-            if (kind < 85) {
+            if (kind == 99) {
+                const Price price = kMidPrice + uniform(-kPriceRange, kPriceRange);
+                book.clear_level(side, price);
+                oracle.clear_level(side, price);
+            } else if (kind < 85) {
                 ASSERT_EQ(book.cancel(id), oracle.cancel(id)) << "op " << op;
             } else {
                 const Qty qty = uniform(1, 100);

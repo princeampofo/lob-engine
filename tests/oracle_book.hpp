@@ -47,6 +47,10 @@ public:
         return true;
     }
 
+    void clear_level(Side side, Price price) override {
+        std::erase_if(orders_, [&](const Order& o) { return o.side == side && o.price == price; });
+    }
+
     std::optional<Price> best_bid() const override {
         Depth d = depth(1);
         if (d.bids.empty()) return std::nullopt;

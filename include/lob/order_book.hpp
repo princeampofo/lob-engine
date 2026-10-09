@@ -36,6 +36,9 @@ public:
     // Returns false if the id is not in the book.
     virtual bool reduce(OrderId id, Qty qty) = 0;
 
+    // Removes every order resting at `price` on `side` (a mass cancel).
+    virtual void clear_level(Side side, Price price) = 0;
+
     virtual std::optional<Price> best_bid() const = 0;
     virtual std::optional<Price> best_ask() const = 0;
 

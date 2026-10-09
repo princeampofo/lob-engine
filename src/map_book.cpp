@@ -72,6 +72,14 @@ void MapBook::erase(Levels& levels, std::list<Order>::iterator order) {
 }
 
 template <class Levels>
+void MapBook::clear(Levels& levels, Price price) {
+    auto level_it = levels.find(price);
+    if (level_it == levels.end()) return;
+    for (const Order& order : level_it->second.orders) orders_.erase(order.id);
+    levels.erase(level_it);
+}
+
+template <class Levels>
 void MapBook::reduce_in_place(Levels& levels, std::list<Order>::iterator order, Qty qty) {
     order->qty -= qty;
     levels.find(order->price)->second.total -= qty;
@@ -127,6 +135,14 @@ bool MapBook::reduce(OrderId id, Qty qty) {
         reduce_in_place(asks_, order, qty);
     }
     return true;
+}
+
+void MapBook::clear_level(Side side, Price price) {
+    if (side == Side::Buy) {
+        clear(bids_, price);
+    } else {
+        clear(asks_, price);
+    }
 }
 
 std::optional<Price> MapBook::best_bid() const {

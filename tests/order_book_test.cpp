@@ -173,6 +173,20 @@ TYPED_TEST(OrderBookTest, MarketSellWalksBidsFromHighest) {
     EXPECT_EQ(this->book.depth(10), (Depth{{{98, 3}}, {}}));
 }
 
+TYPED_TEST(OrderBookTest, ClearLevelRemovesEveryOrderAtThatPrice) {
+    this->limit(1, kBuy, 100, 5);
+    this->limit(2, kBuy, 100, 6);
+    this->limit(3, kBuy, 99, 7);
+    this->limit(4, kSell, 105, 8);
+    this->book.clear_level(kBuy, 100);
+    this->book.clear_level(kBuy, 98);  // no such level: no effect
+
+    EXPECT_EQ(this->book.depth(10), (Depth{{{99, 7}}, {{105, 8}}}));
+    EXPECT_FALSE(this->book.cancel(1));
+    EXPECT_FALSE(this->book.cancel(2));
+    EXPECT_TRUE(this->book.cancel(3));
+}
+
 TYPED_TEST(OrderBookTest, IdCanBeReusedAfterOrderLeaves) {
     this->limit(1, kBuy, 100, 5);
     this->book.cancel(1);

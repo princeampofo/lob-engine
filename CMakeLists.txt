@@ -21,9 +21,12 @@ if(LOB_SANITIZE)
   add_link_options(-fsanitize=address,undefined)
 endif()
 
-add_library(lob src/map_book.cpp)
+add_library(lob src/map_book.cpp src/lobster.cpp)
 target_include_directories(lob PUBLIC include)
 target_link_libraries(lob PRIVATE lob_warnings)
+
+add_executable(lob_replay src/replay_main.cpp)
+target_link_libraries(lob_replay PRIVATE lob lob_warnings)
 
 # Tests
 include(FetchContent)
@@ -35,7 +38,11 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(googletest)
 
 enable_testing()
-add_executable(lob_tests tests/order_book_test.cpp tests/differential_test.cpp)
+add_executable(lob_tests tests/order_book_test.cpp tests/differential_test.cpp
+                         tests/lobster_test.cpp)
+target_compile_definitions(lob_tests PRIVATE
+  LOB_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data"
+  LOB_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
 target_link_libraries(lob_tests PRIVATE lob lob_warnings GTest::gtest_main)
 include(GoogleTest)
 gtest_discover_tests(lob_tests)

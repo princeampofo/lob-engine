@@ -20,6 +20,7 @@ public:
     void add_market(OrderId id, Side side, Qty qty, std::vector<Trade>& trades) override;
     bool cancel(OrderId id) override;
     bool reduce(OrderId id, Qty qty) override;
+    void clear_level(Side side, Price price) override;
 
     std::optional<Price> best_bid() const override;
     std::optional<Price> best_ask() const override;
@@ -45,6 +46,9 @@ private:
 
     template <class Levels>
     static void erase(Levels& levels, std::list<Order>::iterator order);
+
+    template <class Levels>
+    void clear(Levels& levels, Price price);
 
     template <class Levels>
     static void reduce_in_place(Levels& levels, std::list<Order>::iterator order, Qty qty);
