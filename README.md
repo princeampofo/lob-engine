@@ -1,34 +1,29 @@
 # lob-engine
 
-[![CI](https://github.com/princeampofo/lob-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/princeampofo/lob-engine/actions/workflows/ci.yml)
-
-A C++20 limit order book with price-time matching, validated by replaying Nasdaq
-order-level data (LOBSTER). It has two implementations behind one interface, a
-`std::map` reference book and a price ladder about 4x faster, plus an event-driven
-backtester for an order-book-imbalance strategy and Python bindings with an
+A C++20 limit order book with price-time matching, validated against Nasdaq order-level data
+(LOBSTER). It has two implementations behind one interface, a `std::map` reference book and
+a price ladder about 4x faster, plus an event-driven backtester and Python bindings with an
 [analysis notebook](python/analysis.ipynb).
 
 ## Results
 
 **Correctness**
-- **0 mismatches across 2.11M messages.** Five full days (AAPL, AMZN, GOOG, INTC, MSFT,
-  2012-06-21) are replayed, and the book is checked against LOBSTER's top 10 levels after
-  every message ([details](#lobster-replay)).
-- **1M-operation differential test** against a naive oracle book: trades, return values
-  and book state must match after every operation.
-- The test suite also runs under ASan and UBSan.
-- **0 heap allocations** in the ladder book across 200k add/cancel/match operations,
-  counted by hooking `operator new`. The map book makes over 10k.
+- **0 mismatches across 2.11M messages:** five full days (AAPL, AMZN, GOOG, INTC, MSFT,
+  2012-06-21), checked against LOBSTER's top 10 levels after every message
+  ([details](#lobster-replay)).
+- **1M-operation differential test** against a naive oracle book, plus ASan/UBSan runs.
+- **0 heap allocations** in the ladder book over 200k operations (counted by hooking
+  `operator new`), against 10k+ for the map book.
 
-**Speed**: Apple M4, Apple clang 21, `-O3 -march=native`, median of 5 runs.
+**Speed** (Apple M4, Apple clang 21, `-O3 -march=native`, median of 5 runs)
 
-| Operation (book of ~10k orders) | Map | Ladder | Speedup |
+| Operation (~10k-order book) | Map | Ladder | Speedup |
 |---|---:|---:|---:|
 | Add | 46.1 ns | 10.6 ns | 4.4x |
 | Cancel | 43.4 ns | 10.1 ns | 4.3x |
-| Match one resting order | 26.7 ns | 6.7 ns | 4.0x |
+| Match one order | 26.7 ns | 6.7 ns | 4.0x |
 
-| Full-day replay | Messages | Map ns/msg | Ladder ns/msg | Ladder msgs/s | p50 / p99 / p99.9 ns (map → ladder) |
+| Full-day replay | Messages | Map ns/msg | Ladder ns/msg | Ladder msgs/s | p50/p99/p99.9 ns, map → ladder |
 |---|---:|---:|---:|---:|---|
 | AAPL | 400k | 58.8 | 15.8 | 63M | 42/125/208 → <42/42/83 |
 | AMZN | 270k | 54.9 | 15.0 | 67M | 42/167/291 → <42/42/42 |
@@ -36,22 +31,20 @@ backtester for an order-book-imbalance strategy and Python bindings with an
 | INTC | 624k | 43.0 | 11.8 | 85M | 42/84/125 → <42/42/42 |
 | MSFT | 669k | 45.4 | 11.8 | 84M | 42/84/125 → <42/42/42 |
 
-The percentiles are only good to about ±42 ns, because Apple Silicon's user-space clock
-ticks every 41.7 ns. ns/msg is timed over whole days and is precise.
+Percentiles are good to about ±42 ns, the tick of Apple Silicon's clock. ns/msg is timed
+over whole days and is precise.
 
-**Why the ladder is faster:** finding a level is one array index instead of a red-black
-tree walk (about 8 to 10 dependent loads). Levels near the best price share cache lines,
-while map, list and hash nodes are scattered heap allocations. Orders come from a
-preallocated pool, so adding one never calls `malloc`.
+**Why the ladder is faster:** a level lookup is one array index instead of a red-black tree
+walk, levels near the best price share cache lines, and orders come from a preallocated
+pool instead of scattered heap nodes.
 
-**Strategy**: imbalance = (bid vol − ask vol) / (bid vol + ask vol) over the top 3 levels.
-When |imbalance| ≥ threshold, the strategy crosses the spread to trade 100 shares in that
-direction, then exits after a fixed holding time. Orders arrive after 50 µs latency and
-pay a $0.003/share fee. The threshold (0.2 to 0.9) and holding time (0.1 to 60 s) are
-tuned on the morning (best net P&L with ≥ 20 trades), and the afternoon is reported
-out-of-sample.
+**Strategy:** imbalance = (bid vol − ask vol) / (bid vol + ask vol) over the top 3 levels.
+When |imbalance| ≥ threshold, the strategy crosses the spread for 100 shares and exits
+after a fixed holding time, with 50 µs latency and a $0.003/share fee. The threshold and
+holding time are tuned on the morning (best net P&L, ≥ 20 trades) and tested on the
+afternoon:
 
-| Afternoon (test) | Setting | Trades | At mid $ | Net $ | Hit rate | Corr (AM / PM) |
+| Afternoon | Setting | Trades | At mid $ | Net $ | Hit rate | Corr (AM / PM) |
 |---|---|---:|---:|---:|---:|---|
 | AAPL | 0.9, 60 s | 102 | −271 | −2,246 | 23% | 0.026 / 0.024 |
 | AMZN | 0.9, 60 s | 86 | +32 | −1,309 | 12% | 0.069 / 0.057 |
@@ -59,34 +52,29 @@ out-of-sample.
 | INTC | 0.5, 60 s | 14 | +8.50 | −14.66 | 21% | 0.260 / 0.261 |
 | MSFT | 0.7, 10 s | 1 | +2 | +0.40 | 100% | 0.221 / 0.275 |
 
-*At mid* is the P&L at mid prices (the signal before costs). *Corr* is the correlation
-between imbalance and the next mid-price change. Morning results and per-trade logs come
-from `lob_backtest`.
+*At mid* is the P&L at mid prices, i.e. the signal before costs. *Corr* is the correlation
+between imbalance and the next mid-price change.
 
-- **The signal is real and stable.** Correlation with the next mid move is 0.22 to 0.28 on
-  the large-tick stocks (INTC, MSFT) and 0.02 to 0.07 on the rest, nearly unchanged from
-  morning to afternoon.
-- **It doesn't survive costs.** On INTC the signal earned about 1.5¢/share at mid, and
-  the one-tick spread plus fees took all of it. On AAPL, AMZN and GOOG, levels often hold
-  only a few dozen shares, so 100 shares sweep several levels. All 56 settings lost
-  money on AAPL's morning.
-- **Tuning picked 60 s holds** because fewer trades means fewer spreads paid, not because
-  the signal is better at that horizon.
-- **Simplifications:** no market impact (the strategy's orders don't alter the recorded
-  book), fixed latency, a flat taker fee with no rebates, and one day per stock. Trading
-  this signal profitably would need passive orders that earn the spread, which requires a
-  queue-position model.
+- **The signal is real and stable:** correlation is 0.22 to 0.28 on large-tick INTC and
+  MSFT and 0.02 to 0.07 elsewhere, nearly unchanged from morning to afternoon.
+- **It doesn't survive costs:** INTC earned about 1.5¢/share at mid, which the one-tick
+  spread plus fees erased. On AAPL, AMZN and GOOG, thin levels mean 100 shares sweep the
+  book; all 56 settings lost money on AAPL's morning.
+- **60 s holds won tuning** because fewer trades pay fewer spreads, not because the signal
+  is better at that horizon.
+- **Simplifications:** no market impact, fixed latency, flat taker fee, one day per stock.
+  Profiting would need passive orders that earn the spread, i.e. a queue-position model.
 
 ## Design
 
-One [`OrderBook`](include/lob/order_book.hpp) interface: limit, market, cancel, reduce,
-clear level, best bid/ask, top-N depth. Prices and quantities are `int64` ticks, with no
-floating point in the book. Every test runs against every implementation (typed tests).
+One [`OrderBook`](include/lob/order_book.hpp) interface (limit, market, cancel, reduce,
+clear level, best bid/ask, depth). Prices and quantities are `int64` ticks, with no floating
+point. Typed tests run every test against every implementation.
 
-**[Map book](include/lob/map_book.hpp)**: `std::map<price, level>` per side, a
-`std::list` FIFO per level, and an `unordered_map` from id to list iterator.
-
-**[Ladder book](include/lob/ladder_book.hpp)**:
+- **[Map book](include/lob/map_book.hpp):** `std::map` of levels per side, a `std::list`
+  FIFO per level, and an `unordered_map` from id to list iterator. Add and cancel are
+  O(log L).
+- **[Ladder book](include/lob/ladder_book.hpp):** add, cancel and per-fill match are O(1).
 
 ```
 levels_ (one slot per tick, bids and asks share it)   nodes_ (object pool)
@@ -95,61 +83,55 @@ levels_ (one slot per tick, bids and asks share it)   nodes_ (object pool)
   each level: head/tail node index + total qty        ids_: flat hash, id -> node
 ```
 
-- **Price ladder:** `index = (price − base) / tick`. The best bid/ask are tracked as
-  indexes, and scans stop at each side's outermost occupied slot.
-- **Intrusive FIFO:** prev/next links live in the order node, giving O(1) append and
-  O(1) removal from anywhere.
-- **Object pool + flat id map:** open addressing with backward-shift deletion and no
-  tombstones. Nothing allocates once they are sized.
-- Add, cancel and per-fill match are O(1); the map book is O(log L) for add and cancel.
-
-**Trade-off:** the ladder needs a bounded price range (a LOBSTER day fits in ~1,750
-one-cent slots). It grows and re-centers when a price falls outside, which is the only
-allocation. Finding the next level after the best empties costs the gap in ticks, so a
-very sparse book would want an occupancy bitmap.
+- **Price ladder:** `index = (price − base) / tick`, with the best bid/ask tracked as
+  indexes.
+- **Intrusive FIFO:** prev/next links live in the order node, so removal from anywhere is
+  O(1).
+- **Object pool + flat id map** (open addressing, backward-shift deletion): nothing
+  allocates once they're sized.
+- **Trade-off:** it needs a bounded price range (a LOBSTER day fits in ~1,750 one-cent
+  slots) and re-centers when a price falls outside, which is its only allocation. After
+  the best level empties, finding the next one costs the gap in ticks.
 
 ## LOBSTER replay
 
-Each recorded event is applied directly (no re-matching), handling the format's quirks:
+Events are applied as recorded (no re-matching), handling the format's quirks:
 
-- **Pre-existing orders:** the first snapshot is seeded as anonymous volume per level.
-  Cancels or executions of unknown ids draw it down.
-- **Hidden executions and cross trades** count as trades without touching the book.
-- **Execution direction** is the resting order's side.
-- **Placeholder prices** (±9,999,999,999) mark empty levels.
-- **Unreported deep levels:** LOBSTER only logs events within the top 10 levels, so a
-  level that drifts past the 10th can change unseen. After each message, every level at
-  or above the previous row's 10th must match exactly. Levels newly in view are loaded
-  from the snapshot and counted. 98% of rows also match all 10 levels outright.
+- **Pre-existing orders:** seeded from the first snapshot as anonymous volume per level,
+  which cancels and executions of unknown ids then draw down.
+- **Hidden executions and cross trades** count as trades but leave the book alone.
+- **Execution direction** is the resting order's side, and ±9,999,999,999 prices mark
+  empty levels.
+- **Unreported deep levels:** LOBSTER only logs events within the top 10 levels, so a level
+  beyond the 10th can change unseen. Every level inside the previous row's window must
+  match exactly; levels newly in view are loaded from the snapshot and counted. 98% of rows
+  match all 10 levels outright.
 
-On a mismatch, `lob_replay` prints the message index, the event and both books side by
-side.
+On a mismatch, `lob_replay` prints the message and both books side by side.
 
-**Backtester** ([backtest.hpp](include/lob/backtest.hpp)): the strategy is called once
-per timestamp after all its messages are applied, so it has no lookahead. Orders queue
-with arrival = send + latency and fill against the book at arrival, walking the visible
-levels. Many strategies run in one pass, so the 56-setting grid takes one replay per
-stock.
+**Backtester** ([backtest.hpp](include/lob/backtest.hpp)): the strategy runs once per
+timestamp, after all of that timestamp's messages, so it has no lookahead. Orders fill at
+send + latency against the book at that moment, walking the visible levels. All 56 tuning
+settings run in a single replay.
 
 ## Python
 
-`pip install .` builds the C++ core into a `lob` module (pybind11 + scikit-build-core).
-Results come back as NumPy arrays:
+`pip install .` builds a `lob` module (pybind11 + scikit-build-core) that returns NumPy
+arrays:
 
 ```python
 import lob
 day = lob.Day("data/AAPL_..._message_10.csv", "data/AAPL_..._orderbook_10.csv")
-day.replay()                                   # mismatch check, as lob_replay
-day.book_history(levels=10, step=1)            # replayed book: time, bid/ask price & size
-day.signal(levels=3)                           # imbalance and mid at every update
-day.backtest(0.5, holding_s=60, start_s=45_900, end_s=57_600)   # trades + summary
-day.backtest_grid([0.3, 0.5, 0.7], [1, 10, 60], end_s=45_900)    # many settings, one pass
+day.replay()                                   # mismatch check
+day.book_history(levels=10)                    # replayed book over time
+day.signal()                                   # imbalance and mid at every update
+day.backtest(0.5, holding_s=60, start_s=45_900, end_s=57_600)
+day.backtest_grid([0.3, 0.5, 0.7], [1, 10, 60], end_s=45_900)   # one pass
 ```
 
-[python/analysis.ipynb](python/analysis.ipynb) (`pip install ".[notebook]"`) plots the book
-over time, imbalance against future moves at several horizons, and where the strategy's
-P&L goes. It also shows that the signal fades beyond about 10 to 60 seconds, which is
-why long holds don't rescue it.
+The [notebook](python/analysis.ipynb) (`pip install ".[notebook]"`) plots the book over
+time, imbalance against future moves, and the P&L breakdown. It also shows the signal
+fading beyond 10 to 60 s, which is why long holds don't rescue it.
 
 ## Build and run
 
@@ -160,11 +142,10 @@ cmake -S . -B build && cmake --build build -j     # Release, -O3 -march=native
 scripts/download_data.sh                          # LOBSTER samples, ~600 MB
 ./build/lob_replay data/AAPL_2012-06-21_34200000_57600000_{message,orderbook}_10.csv
 ./build/lob_backtest                              # writes results/
-./build/lob_micro_bench
-./build/lob_replay_bench
+./build/lob_micro_bench && ./build/lob_replay_bench
 
 cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=Debug -DLOB_SANITIZE=ON   # sanitizers
 ```
 
-Requires CMake 3.25+ and a C++20 compiler. GoogleTest and Google Benchmark are fetched at
-configure time. Replay tests skip themselves when `data/` is empty.
+Requires CMake 3.25+ and a C++20 compiler; GoogleTest and Google Benchmark are fetched
+automatically. Replay tests skip when `data/` is empty.
