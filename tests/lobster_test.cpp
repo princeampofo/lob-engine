@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <sstream>
 
+#include "lob/ladder_book.hpp"
 #include "lob/lobster.hpp"
 #include "lob/map_book.hpp"
 
@@ -70,11 +71,21 @@ TEST(LobsterParse, DropsPlaceholderLevels) {
 template <class Book>
 class LobsterReplayTest : public ::testing::Test {};
 
-using BookTypes = ::testing::Types<MapBook>;
+// LOBSTER prices are dollars x 10,000 and move in whole cents.
+template <class Book>
+Book make_book() {
+    if constexpr (std::is_same_v<Book, LadderBook>) {
+        return LadderBook(100);
+    } else {
+        return Book{};
+    }
+}
+
+using BookTypes = ::testing::Types<MapBook, LadderBook>;
 TYPED_TEST_SUITE(LobsterReplayTest, BookTypes);
 
 TYPED_TEST(LobsterReplayTest, FixtureMatchesEveryRow) {
-    TypeParam book;
+    auto book = make_book<TypeParam>();
     std::ostringstream log;
     const auto result =
         replay_and_check(book, read_messages(kMessages), read_snapshots(kSnapshots), log, 2);
@@ -88,7 +99,7 @@ TYPED_TEST(LobsterReplayTest, FixtureMatchesEveryRow) {
 }
 
 TYPED_TEST(LobsterReplayTest, ReloadsLevelsComingIntoView) {
-    TypeParam book;
+    auto book = make_book<TypeParam>();
     std::ostringstream log;
     const auto result = replay_and_check(book, read_messages(kWindowMessages),
                                          read_snapshots(kWindowSnapshots), log, 2);
@@ -105,7 +116,7 @@ TYPED_TEST(LobsterReplayTest, ReportsMismatch) {
     auto snapshots = read_snapshots(kSnapshots);
     snapshots[5].asks[0].qty += 1;
 
-    TypeParam book;
+    auto book = make_book<TypeParam>();
     std::ostringstream log;
     const auto result = replay_and_check(book, read_messages(kMessages), snapshots, log, 2);
 
@@ -132,7 +143,7 @@ TYPED_TEST(LobsterReplayTest, SampleDaysMatchEveryRow) {
         std::string book_file = messages.string();
         book_file.replace(book_file.rfind("_message_"), 9, "_orderbook_");
 
-        TypeParam book;
+        auto book = make_book<TypeParam>();
         std::ostringstream log;
         const auto result = replay_and_check(book, read_messages(messages.string()),
                                              read_snapshots(book_file), log);

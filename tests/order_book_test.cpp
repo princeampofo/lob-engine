@@ -2,6 +2,7 @@
 
 #include <gtest/gtest.h>
 
+#include "lob/ladder_book.hpp"
 #include "lob/map_book.hpp"
 #include "oracle_book.hpp"
 
@@ -27,7 +28,7 @@ protected:
     Book book;
 };
 
-using BookTypes = ::testing::Types<MapBook, OracleBook>;
+using BookTypes = ::testing::Types<MapBook, LadderBook, OracleBook>;
 TYPED_TEST_SUITE(OrderBookTest, BookTypes);
 
 constexpr Side kBuy = Side::Buy;
@@ -185,6 +186,30 @@ TYPED_TEST(OrderBookTest, ClearLevelRemovesEveryOrderAtThatPrice) {
     EXPECT_FALSE(this->book.cancel(1));
     EXPECT_FALSE(this->book.cancel(2));
     EXPECT_TRUE(this->book.cancel(3));
+}
+
+TYPED_TEST(OrderBookTest, PricesFarApart) {
+    // Far beyond the ladder's initial range on both sides.
+    this->limit(1, kBuy, 1'000, 5);
+    this->limit(2, kSell, 1'000'000, 5);
+    this->limit(3, kBuy, 10, 5);
+    this->limit(4, kSell, 2'000'000, 5);
+    EXPECT_EQ(this->book.depth(10), (Depth{{{1'000, 5}, {10, 5}}, {{1'000'000, 5}, {2'000'000, 5}}}));
+
+    auto trades = this->market(5, kSell, 7);
+    EXPECT_EQ(trades, (std::vector<Trade>{{5, 1, 1'000, 5}, {5, 3, 10, 2}}));
+    trades = this->limit(6, kBuy, 3'000'000, 10);
+    EXPECT_EQ(trades, (std::vector<Trade>{{6, 2, 1'000'000, 5}, {6, 4, 2'000'000, 5}}));
+    EXPECT_EQ(this->book.depth(10), (Depth{{{10, 3}}, {}}));
+}
+
+TYPED_TEST(OrderBookTest, NegativePrices) {
+    this->limit(1, kBuy, -5, 5);
+    this->limit(2, kSell, -2, 5);
+    EXPECT_EQ(this->book.best_bid(), -5);
+    EXPECT_EQ(this->book.best_ask(), -2);
+    auto trades = this->limit(3, kSell, -6, 5);
+    EXPECT_EQ(trades, (std::vector<Trade>{{3, 1, -5, 5}}));
 }
 
 TYPED_TEST(OrderBookTest, IdCanBeReusedAfterOrderLeaves) {

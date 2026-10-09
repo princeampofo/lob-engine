@@ -6,6 +6,7 @@
 
 #include <random>
 
+#include "lob/ladder_book.hpp"
 #include "lob/map_book.hpp"
 #include "oracle_book.hpp"
 
@@ -20,7 +21,7 @@ constexpr OrderId kCancelWindow = 500;  // cancels target one of the last N ids
 template <class Book>
 class DifferentialTest : public ::testing::Test {};
 
-using BookTypes = ::testing::Types<MapBook>;
+using BookTypes = ::testing::Types<MapBook, LadderBook>;
 TYPED_TEST_SUITE(DifferentialTest, BookTypes);
 
 TYPED_TEST(DifferentialTest, MatchesOracleOnRandomOperations) {
@@ -43,8 +44,10 @@ TYPED_TEST(DifferentialTest, MatchesOracleOnRandomOperations) {
         const std::int64_t kind = uniform(0, 99);
 
         if (kind < 50) {
-            const Order order{next_id++, side, kMidPrice + uniform(-kPriceRange, kPriceRange),
-                              uniform(1, 100)};
+            // Now and then a price far from the action, to exercise deep books.
+            const Price offset = uniform(0, 999) == 0 ? uniform(-5'000, 5'000)
+                                                      : uniform(-kPriceRange, kPriceRange);
+            const Order order{next_id++, side, kMidPrice + offset, uniform(1, 100)};
             book.add_limit(order, book_trades);
             oracle.add_limit(order, oracle_trades);
         } else if (kind < 60) {
