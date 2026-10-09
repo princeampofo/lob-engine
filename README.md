@@ -1,197 +1,147 @@
 # lob-engine
 
-A limit order book and matching engine in C++20. It matches limit and market orders by
-price-time priority, rebuilds the book from real Nasdaq order-level data (LOBSTER), and
-comes in two implementations behind one interface: a simple `std::map` reference book and
-a cache-friendly price ladder that is about 4x faster.
+A C++20 limit order book with price-time matching, validated by replaying Nasdaq
+order-level data (LOBSTER). It has two implementations behind one interface, a
+`std::map` reference book and a price ladder about 4x faster, plus an event-driven
+backtester for an order-book-imbalance strategy.
 
 ## Results
 
-### Correctness
+**Correctness**
+- **0 mismatches across 2.11M messages.** Five full days (AAPL, AMZN, GOOG, INTC, MSFT,
+  2012-06-21) are replayed, and the book is checked against LOBSTER's top 10 levels after
+  every message ([details](#lobster-replay)).
+- **1M-operation differential test** against a naive oracle book: trades, return values
+  and book state must match after every operation.
+- The test suite also runs under ASan and UBSan.
+- **0 heap allocations** in the ladder book across 200k add/cancel/match operations,
+  counted by hooking `operator new`. The map book makes over 10k.
 
-- **Nasdaq replay: 0 mismatches across 2,110,860 messages.** Five full trading days
-  (AAPL, AMZN, GOOG, INTC, MSFT on 2012-06-21) are replayed message by message, and the
-  book is checked against LOBSTER's recorded top 10 levels after every message. Both
-  books pass. [How the check works](#replaying-lobster-data).
-- **Differential test: 1,000,000 random operations** (limit, market, cancel, reduce, mass
-  cancel) applied to each book and to a deliberately naive oracle, with identical trades,
-  return values and book state required after every operation.
-- **Sanitizers:** the full test suite also runs under AddressSanitizer and
-  UndefinedBehaviorSanitizer.
-- **No allocation while trading:** a test counts every call to `operator new` across
-  200,000 adds, cancels, reductions and crossing orders. The ladder book makes 0; the map
-  book makes over 10,000.
+**Speed**: Apple M4, Apple clang 21, `-O3 -march=native`, median of 5 runs.
 
-### Speed
-
-Measured on an Apple M4 (10 cores, 24 GB), macOS 26.6, Apple clang 21.0.0, Release build
-with `-O3 -march=native -DNDEBUG`. The machine was in normal desktop use (load average
-about 2.6), not fully idle. Numbers from different machines are not comparable.
-
-**Microbenchmarks** (Google Benchmark, median of 5 repetitions, book holding ~10,000
-orders):
-
-| Operation | Map book | Ladder book | Speedup |
+| Operation (book of ~10k orders) | Map | Ladder | Speedup |
 |---|---:|---:|---:|
-| Add a resting limit order | 46.1 ns | 10.6 ns | 4.4x |
-| Cancel an order (random order) | 43.4 ns | 10.1 ns | 4.3x |
-| Match a market order against one resting order | 26.7 ns | 6.7 ns | 4.0x |
+| Add | 46.1 ns | 10.6 ns | 4.4x |
+| Cancel | 43.4 ns | 10.1 ns | 4.3x |
+| Match one resting order | 26.7 ns | 6.7 ns | 4.0x |
 
-**Full-day replay** (warm-up pass, then median of 5 passes; per-message latency over 5
-more passes):
+| Full-day replay | Messages | Map ns/msg | Ladder ns/msg | Ladder msgs/s | p50 / p99 / p99.9 ns (map → ladder) |
+|---|---:|---:|---:|---:|---|
+| AAPL | 400k | 58.8 | 15.8 | 63M | 42/125/208 → <42/42/83 |
+| AMZN | 270k | 54.9 | 15.0 | 67M | 42/167/291 → <42/42/42 |
+| GOOG | 148k | 60.6 | 15.7 | 64M | 42/125/167 → <42/42/83 |
+| INTC | 624k | 43.0 | 11.8 | 85M | 42/84/125 → <42/42/42 |
+| MSFT | 669k | 45.4 | 11.8 | 84M | 42/84/125 → <42/42/42 |
 
-| Stock | Messages | Map: msgs/s | Ladder: msgs/s | Map ns/msg | Ladder ns/msg | Map p50 / p99 / p99.9 | Ladder p50 / p99 / p99.9 |
-|---|---:|---:|---:|---:|---:|---|---|
-| AAPL | 400,390 | 17.0M | 63.2M | 58.8 | 15.8 | 42 / 125 / 208 | <42 / 42 / 83 |
-| AMZN | 269,747 | 18.2M | 66.9M | 54.9 | 15.0 | 42 / 167 / 291 | <42 / 42 / 42 |
-| GOOG | 147,915 | 16.5M | 63.9M | 60.6 | 15.7 | 42 / 125 / 167 | <42 / 42 / 83 |
-| INTC | 624,039 | 23.3M | 84.8M | 43.0 | 11.8 | 42 / 84 / 125 | <42 / 42 / 42 |
-| MSFT | 668,764 | 22.0M | 84.4M | 45.4 | 11.8 | 42 / 84 / 125 | <42 / 42 / 42 |
+The percentiles are only good to about ±42 ns, because Apple Silicon's user-space clock
+ticks every 41.7 ns. ns/msg is timed over whole days and is precise.
 
-Latency percentiles are in nanoseconds. On Apple Silicon the system clock ticks every
-41.7 ns and no finer timer is available to user programs, so each reading is only good
-to about ±42 ns, and "<42" means under one tick. The ns/msg column comes from timing whole
-days and is precise.
+**Why the ladder is faster:** finding a level is one array index instead of a red-black
+tree walk (about 8 to 10 dependent loads). Levels near the best price share cache lines,
+while map, list and hash nodes are scattered heap allocations. Orders come from a
+preallocated pool, so adding one never calls `malloc`.
 
-### Why the ladder is faster
+**Strategy**: imbalance = (bid vol − ask vol) / (bid vol + ask vol) over the top 3 levels.
+When |imbalance| ≥ threshold, the strategy crosses the spread to trade 100 shares in that
+direction, then exits after a fixed holding time. Orders arrive after 50 µs latency and
+pay a $0.003/share fee. The threshold (0.2 to 0.9) and holding time (0.1 to 60 s) are
+tuned on the morning (best net P&L with ≥ 20 trades), and the afternoon is reported
+out-of-sample.
 
-- **One array lookup per price instead of a tree walk.** The map book finds a level by
-  walking a red-black tree, about 8 to 10 dependent pointer loads for a few hundred
-  levels.
-  The ladder computes `(price - base) / tick` and indexes an array.
-- **Contiguous memory.** Ladder levels sit next to each other, so the levels near the
-  best price share cache lines. Map nodes, list nodes and hash-map nodes are separate
-  heap allocations scattered through memory.
-- **No allocation per order.** Orders come from a preallocated pool and the order-id map
-  is a flat array, so adding an order is a few writes into memory that is already in
-  cache. The map book allocates a list node and a hash-map node per order, plus a
-  tree node for each new price level.
+| Afternoon (test) | Setting | Trades | At mid $ | Net $ | Hit rate | Corr (AM / PM) |
+|---|---|---:|---:|---:|---:|---|
+| AAPL | 0.9, 60 s | 102 | −271 | −2,246 | 23% | 0.026 / 0.024 |
+| AMZN | 0.9, 60 s | 86 | +32 | −1,309 | 12% | 0.069 / 0.057 |
+| GOOG | 0.9, 60 s | 74 | +345 | −2,195 | 12% | 0.051 / 0.040 |
+| INTC | 0.5, 60 s | 14 | +8.50 | −14.66 | 21% | 0.260 / 0.261 |
+| MSFT | 0.7, 10 s | 1 | +2 | +0.40 | 100% | 0.221 / 0.275 |
+
+*At mid* is the P&L at mid prices (the signal before costs). *Corr* is the correlation
+between imbalance and the next mid-price change. Morning results and per-trade logs come
+from `lob_backtest`.
+
+- **The signal is real and stable.** Correlation with the next mid move is 0.22 to 0.28 on
+  the large-tick stocks (INTC, MSFT) and 0.02 to 0.07 on the rest, nearly unchanged from
+  morning to afternoon.
+- **It doesn't survive costs.** On INTC the signal earned about 1.5¢/share at mid, and
+  the one-tick spread plus fees took all of it. On AAPL, AMZN and GOOG, levels often hold
+  only a few dozen shares, so 100 shares sweep several levels. All 56 settings lost
+  money on AAPL's morning.
+- **Tuning picked 60 s holds** because fewer trades means fewer spreads paid, not because
+  the signal is better at that horizon.
+- **Simplifications:** no market impact (the strategy's orders don't alter the recorded
+  book), fixed latency, a flat taker fee with no rebates, and one day per stock. Trading
+  this signal profitably would need passive orders that earn the spread, which requires a
+  queue-position model.
 
 ## Design
 
-Both books implement one interface, [`OrderBook`](include/lob/order_book.hpp): add a limit
-order, add a market order, cancel, reduce quantity, mass-cancel a level, best bid and
-ask, and a top-N depth snapshot. Prices and quantities are 64-bit integers; nothing in
-the book uses floating point. Trades go into a caller-owned vector, so the caller can
-reuse it.
+One [`OrderBook`](include/lob/order_book.hpp) interface: limit, market, cancel, reduce,
+clear level, best bid/ask, top-N depth. Prices and quantities are `int64` ticks, with no
+floating point in the book. Every test runs against every implementation (typed tests).
 
-**Reference book** ([map_book.hpp](include/lob/map_book.hpp)): a `std::map` per side from
-price to level, each level a `std::list` of orders, plus a `std::unordered_map` from order
-id to the order's place in its list.
+**[Map book](include/lob/map_book.hpp)**: `std::map<price, level>` per side, a
+`std::list` FIFO per level, and an `unordered_map` from id to list iterator.
 
-**Ladder book** ([ladder_book.hpp](include/lob/ladder_book.hpp)):
+**[Ladder book](include/lob/ladder_book.hpp)**:
 
 ```
- levels_ (one slot per tick)                 nodes_ (object pool)
- index:  ...  97   98   99  100  101 ...     [0] id=17 qty=50  prev=-  next=4
-            [bid][bid][   ][ask][ask]        [4] id=23 qty=10  prev=0  next=-
-               |              |              [9] id=31 qty=200 prev=-  next=-
-               v              v
-         head=0, tail=4    head=9, tail=9     ids_ (flat hash map)
-         total=60          total=200          17 -> 0, 23 -> 4, 31 -> 9
-            ^                 ^
-        best_bid_         best_ask_
+levels_ (one slot per tick, bids and asks share it)   nodes_ (object pool)
+  ... [bid 60][bid 10][  ][ask 200][ask 5] ...        [0] id=17 qty=50 next=4
+        ^ best_bid_         ^ best_ask_               [4] id=23 qty=10 prev=0
+  each level: head/tail node index + total qty        ids_: flat hash, id -> node
 ```
 
-- **Price ladder:** an array with one level per tick from a base price. Bids and asks
-  share it, since every bid is below every ask. The best bid and ask are tracked as
-  indexes. A price outside the array makes it grow and re-center (the only time it
-  allocates).
-- **Intrusive FIFO per level:** each order holds the indexes of its neighbours, so
-  orders append at the tail and are removed from anywhere in O(1).
-- **Object pool:** all orders live in one preallocated array, handed out and returned
-  through a free list.
-- **Flat order-id map:** open addressing with linear probing and backward-shift deletion,
-  in one array, kept at most half full.
+- **Price ladder:** `index = (price − base) / tick`. The best bid/ask are tracked as
+  indexes, and scans stop at each side's outermost occupied slot.
+- **Intrusive FIFO:** prev/next links live in the order node, giving O(1) append and
+  O(1) removal from anywhere.
+- **Object pool + flat id map:** open addressing with backward-shift deletion and no
+  tombstones. Nothing allocates once they are sized.
+- Add, cancel and per-fill match are O(1); the map book is O(log L) for add and cancel.
 
-| Operation | Map book | Ladder book |
-|---|---|---|
-| Add (resting) | O(log L) | O(1) |
-| Cancel by id | O(log L) | O(1) |
-| Match, per fill | O(1) | O(1) |
-| Best bid / ask | O(1) | O(1) |
+**Trade-off:** the ladder needs a bounded price range (a LOBSTER day fits in ~1,750
+one-cent slots). It grows and re-centers when a price falls outside, which is the only
+allocation. Finding the next level after the best empties costs the gap in ticks, so a
+very sparse book would want an occupancy bitmap.
 
-L is the number of price levels. When the ladder empties the best level, it scans to
-the next occupied slot, which costs the gap in ticks. Real books are dense near the
-best price, so the gap is usually a tick or two.
+## LOBSTER replay
 
-**The ladder's trade-off:** it needs a bounded price range and spends memory on empty
-ticks. Here it grows and re-centers when a price falls outside, which is rare and cheap
-for a stock that moves a few percent a day (a full LOBSTER day fits in about 1,750
-one-cent slots). A lone order far from the best price also makes the next-level scan
-long once the levels in between empty. A bitmap of occupied slots would let the scan
-check 64 slots per instruction, if profiling ever shows it matters.
+Each recorded event is applied directly (no re-matching), handling the format's quirks:
 
-## Replaying LOBSTER data
-
-[LOBSTER](https://lobsterdata.com) provides Nasdaq order-level data as two files per day:
-a message file (one event per row: submit, partial cancel, delete, visible execution,
-hidden execution, cross trade, trading halt) and an order book file (the top N levels
-after each event). The [replay](include/lob/lobster.hpp) applies each recorded event to
-the book directly instead of re-matching, and handles the format's quirks:
-
-- **Integer prices** (dollars x 10,000) map straight onto integer ticks.
-- **Orders from before the file starts.** The book is seeded from the first snapshot as
-  one anonymous order per level. A cancel or execution of an unknown order id is taken
-  out of that level's anonymous volume.
-- **Hidden executions and cross trades** are counted as trades but leave the visible book
-  alone.
-- **Execution direction** refers to the resting order's side.
-- **Empty levels** use placeholder prices (±9,999,999,999) and are dropped.
-- **Only the top 10 levels are reported.** LOBSTER's message file only contains events
-  that change the book within the requested 10 levels. Once a level drifts beyond the
-  10th, changes to it go unreported, so when it comes back into view its contents can't
-  be known from the messages. The check is strict wherever the data allows: after every
-  message, every level at or better than the previous row's 10th level must match
-  exactly. A level that comes into view from beyond that window is loaded from the
-  snapshot as anonymous volume and counted. About 98% of checked rows (2,076,364 of 2,110,855)
-  also match on all 10 levels outright.
+- **Pre-existing orders:** the first snapshot is seeded as anonymous volume per level.
+  Cancels or executions of unknown ids draw it down.
+- **Hidden executions and cross trades** count as trades without touching the book.
+- **Execution direction** is the resting order's side.
+- **Placeholder prices** (±9,999,999,999) mark empty levels.
+- **Unreported deep levels:** LOBSTER only logs events within the top 10 levels, so a
+  level that drifts past the 10th can change unseen. After each message, every level at
+  or above the previous row's 10th must match exactly. Levels newly in view are loaded
+  from the snapshot and counted. 98% of rows also match all 10 levels outright.
 
 On a mismatch, `lob_replay` prints the message index, the event and both books side by
-side:
+side.
 
-```
-Mismatch at message 5: time_ns=34202000000001 type=3 id=101 size=100 price=1010000 side=sell
-  lvl ours bid          ours ask          file bid          file ask
-* 1   130@1000000       180@1010000       130@1000000       181@1010000
-```
+**Backtester** ([backtest.hpp](include/lob/backtest.hpp)): the strategy is called once
+per timestamp after all its messages are applied, so it has no lookahead. Orders queue
+with arrival = send + latency and fill against the book at arrival, walking the visible
+levels. Many strategies run in one pass, so the 56-setting grid takes one replay per
+stock.
 
 ## Build and run
 
-Requires CMake 3.25+ and a C++20 compiler. GoogleTest and Google Benchmark are downloaded
-during configuration.
-
 ```
-cmake -S . -B build                    # Release, -O3 -march=native
-cmake --build build -j
-./build/lob_tests                      # unit, differential and replay tests
-./build/lob_allocation_tests           # no-allocation check
+cmake -S . -B build && cmake --build build -j     # Release, -O3 -march=native
+./build/lob_tests && ./build/lob_allocation_tests
 
-scripts/download_data.sh               # LOBSTER samples, ~600 MB (see data/README.md)
-./build/lob_replay data/AAPL_2012-06-21_34200000_57600000_message_10.csv \
-                   data/AAPL_2012-06-21_34200000_57600000_orderbook_10.csv
-./build/lob_micro_bench                # add / cancel / match
-./build/lob_replay_bench               # full-day throughput and latency
+scripts/download_data.sh                          # LOBSTER samples, ~600 MB
+./build/lob_replay data/AAPL_2012-06-21_34200000_57600000_{message,orderbook}_10.csv
+./build/lob_backtest                              # writes results/
+./build/lob_micro_bench
+./build/lob_replay_bench
+
+cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=Debug -DLOB_SANITIZE=ON   # sanitizers
 ```
 
-Sanitizer build:
-
-```
-cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=Debug -DLOB_SANITIZE=ON
-cmake --build build-asan -j && ./build-asan/lob_tests
-```
-
-The replay tests skip themselves when `data/` is empty.
-
-## Layout
-
-```
-include/lob/   types, OrderBook interface, map and ladder books, object pool,
-               order-id map, LOBSTER parser and replay
-src/           implementations, lob_replay tool
-tests/         typed tests run on every book, naive oracle, differential test,
-               LOBSTER fixtures and replay tests, allocation test
-bench/         Google Benchmark microbenchmarks, full-day replay benchmark
-scripts/       data download
-data/          LOBSTER samples (not committed)
-```
+Requires CMake 3.25+ and a C++20 compiler. GoogleTest and Google Benchmark are fetched at
+configure time. Replay tests skip themselves when `data/` is empty.

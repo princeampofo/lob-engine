@@ -6,6 +6,9 @@ compile_commands.json
 data/*
 !data/README.md
 
+# Backtest output (regenerate with ./build/lob_backtest)
+results/
+
 # Python
 __pycache__/
 *.egg-info/
