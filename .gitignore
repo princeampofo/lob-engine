@@ -1,0 +1,21 @@
+# Build output
+build*/
+compile_commands.json
+
+# LOBSTER data (large; see data/README.md for how to download)
+data/*
+!data/README.md
+
+# Python
+__pycache__/
+*.egg-info/
+.venv/
+.ipynb_checkpoints/
+
+# Editors and OS
+.vscode/
+.idea/
+.cache/
+.DS_Store
+
+SPEC.md
